@@ -85,6 +85,8 @@ pub enum Model {
     O3,
     #[serde(rename = "o4-mini", alias = "o4-mini")]
     O4Mini,
+    #[serde(rename = "codex-mini-latest", alias = "codex-mini-latest")]
+    CodexMiniLatest,
 
     #[serde(rename = "custom")]
     Custom {
@@ -118,6 +120,7 @@ impl Model {
             "o3-mini" => Ok(Self::O3Mini),
             "o3" => Ok(Self::O3),
             "o4-mini" => Ok(Self::O4Mini),
+            "codex-mini-latest" => Ok(Self::CodexMiniLatest),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -138,6 +141,7 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
+            Self::CodexMiniLatest => "codex-mini-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -158,6 +162,7 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
+            Self::CodexMiniLatest => "codex-mini-latest",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -180,6 +185,7 @@ impl Model {
             Self::O3Mini => 200_000,
             Self::O3 => 200_000,
             Self::O4Mini => 200_000,
+            Self::CodexMiniLatest => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -205,7 +211,8 @@ impl Model {
             | Self::FourOmniMini
             | Self::FourPointOne
             | Self::FourPointOneMini
-            | Self::FourPointOneNano => true,
+            | Self::FourPointOneNano
+            | Self::CodexMiniLatest => true,
             Self::O1 | Self::O1Preview | Self::O1Mini => false,
             _ => false,
         }

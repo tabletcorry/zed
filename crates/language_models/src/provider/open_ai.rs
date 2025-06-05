@@ -651,7 +651,8 @@ pub fn count_open_ai_tokens(
             | Model::O1Mini
             | Model::O3
             | Model::O3Mini
-            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            | Model::O4Mini
+            | Model::CodexMiniLatest => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
         }
     })
     .boxed()
