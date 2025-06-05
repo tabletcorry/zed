@@ -46,6 +46,8 @@ pub struct AvailableModel {
     pub max_tokens: usize,
     pub max_output_tokens: Option<u32>,
     pub max_completion_tokens: Option<u32>,
+    #[serde(default)]
+    pub service_tier: Option<open_ai::ServiceTier>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -213,6 +215,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
+                    service_tier: model.service_tier,
                 },
             );
         }
@@ -437,6 +440,7 @@ pub fn into_open_ai(
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
+        service_tier: model.service_tier(),
         max_tokens: max_output_tokens,
         parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.

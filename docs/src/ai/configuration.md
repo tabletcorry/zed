@@ -413,6 +413,12 @@ To use alternate models, perhaps a preview release or a dated model release, or 
           "display_name": "o1-mini",
           "max_tokens": 128000,
           "max_completion_tokens": 20000
+        },
+        {
+          "name": "o3",
+          "display_name": "o3",
+          "max_tokens": 200000,
+          "service_tier": "flex"
         }
       ],
       "version": "1"
@@ -423,6 +429,9 @@ To use alternate models, perhaps a preview release or a dated model release, or 
 
 You must provide the model's Context Window in the `max_tokens` parameter; this can be found in the [OpenAI model documentation](https://platform.openai.com/docs/models).
 OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
+The `service_tier` option controls the [OpenAI service tier](https://platform.openai.com/docs/overview/rate-limits#service-tiers) used for the model.
+If omitted, it defaults to `auto`.
+Only some models, like `o4-mini` and `o3`, currently support setting this option to `flex`.
 Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenRouter {#openrouter}
