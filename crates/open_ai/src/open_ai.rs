@@ -231,6 +231,41 @@ pub struct Request {
     pub tools: Vec<ToolDefinition>,
 }
 
+#[derive(Serialize)]
+struct RequestV2 {
+    pub model: String,
+    #[serde(rename = "input")]
+    pub messages: Vec<RequestMessage>,
+    pub stream: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stop: Vec<String>,
+    pub temperature: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDefinition>,
+}
+
+impl From<Request> for RequestV2 {
+    fn from(req: Request) -> Self {
+        Self {
+            model: req.model,
+            messages: req.messages,
+            stream: req.stream,
+            max_tokens: req.max_tokens,
+            stop: req.stop,
+            temperature: req.temperature,
+            tool_choice: req.tool_choice,
+            parallel_tool_calls: req.parallel_tool_calls,
+            tools: req.tools,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub model: String,
@@ -403,6 +438,37 @@ pub struct ChoiceDelta {
     pub finish_reason: Option<String>,
 }
 
+#[derive(Deserialize, Debug)]
+struct ResponseV2 {
+    pub id: String,
+    #[serde(default)]
+    pub object: String,
+    #[serde(default)]
+    pub created: u64,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub usage: Option<Usage>,
+    #[serde(default)]
+    pub output: Vec<OutputMessageV2>,
+}
+
+#[derive(Deserialize, Debug)]
+struct OutputMessageV2 {
+    #[serde(default)]
+    pub role: Option<Role>,
+    #[serde(default)]
+    pub content: Vec<OutputContentV2>,
+}
+
+#[derive(Deserialize, Debug)]
+struct OutputContentV2 {
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum ResponseStreamResult {
@@ -450,20 +516,92 @@ pub struct Choice {
     pub finish_reason: Option<String>,
 }
 
+impl From<ResponseV2> for Response {
+    fn from(v2: ResponseV2) -> Self {
+        let choices = v2
+            .output
+            .into_iter()
+            .enumerate()
+            .map(|(i, msg)| {
+                let mut content = MessageContent::empty();
+                for part in msg.content {
+                    if let Some(text) = part.text {
+                        content.push_part(MessagePart::Text { text });
+                    }
+                }
+                let message = match msg.role.unwrap_or(Role::Assistant) {
+                    Role::Assistant => RequestMessage::Assistant {
+                        content: Some(content.clone()),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::User => RequestMessage::User { content },
+                    Role::System => RequestMessage::System { content },
+                    Role::Tool => RequestMessage::Tool {
+                        content,
+                        tool_call_id: String::new(),
+                    },
+                };
+                Choice {
+                    index: i as u32,
+                    message,
+                    finish_reason: None,
+                }
+            })
+            .collect();
+
+        Response {
+            id: v2.id,
+            object: v2.object,
+            created: v2.created,
+            model: v2.model,
+            choices,
+            usage: v2.usage.unwrap_or(Usage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+            }),
+        }
+    }
+}
+
+impl From<ResponseV2> for CompletionResponse {
+    fn from(v2: ResponseV2) -> Self {
+        let text = v2
+            .output
+            .get(0)
+            .and_then(|msg| msg.content.get(0))
+            .and_then(|c| c.text.clone())
+            .unwrap_or_default();
+
+        CompletionResponse {
+            id: v2.id,
+            object: v2.object,
+            created: v2.created,
+            model: v2.model,
+            choices: vec![CompletionChoice { text }],
+            usage: v2.usage.unwrap_or(Usage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+            }),
+        }
+    }
+}
+
 pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
 ) -> Result<Response> {
-    let uri = format!("{api_url}/chat/completions");
+    let uri = format!("{api_url}/responses");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key));
 
-    let mut request_body = request;
+    let mut request_body: RequestV2 = request.into();
     request_body.stream = false;
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request_body)?))?;
@@ -472,8 +610,8 @@ pub async fn complete(
     if response.status().is_success() {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        let response: Response = serde_json::from_str(&body)?;
-        Ok(response)
+        let response: ResponseV2 = serde_json::from_str(&body)?;
+        Ok(response.into())
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
@@ -508,21 +646,43 @@ pub async fn complete_text(
     api_key: &str,
     request: CompletionRequest,
 ) -> Result<CompletionResponse> {
-    let uri = format!("{api_url}/completions");
+    let uri = format!("{api_url}/responses");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key));
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    #[derive(Serialize)]
+    struct RequestV2Text {
+        model: String,
+        #[serde(rename = "input")]
+        prompt: String,
+        max_tokens: u32,
+        temperature: f32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prediction: Option<Prediction>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rewrite_speculation: Option<bool>,
+    }
+
+    let request_body = RequestV2Text {
+        model: request.model,
+        prompt: request.prompt,
+        max_tokens: request.max_tokens,
+        temperature: request.temperature,
+        prediction: request.prediction,
+        rewrite_speculation: request.rewrite_speculation,
+    };
+
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request_body)?))?;
     let mut response = client.send(request).await?;
 
     if response.status().is_success() {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        let response = serde_json::from_str(&body)?;
-        Ok(response)
+        let response: ResponseV2 = serde_json::from_str(&body)?;
+        Ok(response.into())
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
@@ -551,58 +711,6 @@ pub async fn complete_text(
     }
 }
 
-fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
-    ResponseStreamEvent {
-        created: response.created as u32,
-        model: response.model,
-        choices: response
-            .choices
-            .into_iter()
-            .map(|choice| {
-                let content = match &choice.message {
-                    RequestMessage::Assistant { content, .. } => content.as_ref(),
-                    RequestMessage::User { content } => Some(content),
-                    RequestMessage::System { content } => Some(content),
-                    RequestMessage::Tool { content, .. } => Some(content),
-                };
-
-                let mut text_content = String::new();
-                match content {
-                    Some(MessageContent::Plain(text)) => text_content.push_str(&text),
-                    Some(MessageContent::Multipart(parts)) => {
-                        for part in parts {
-                            match part {
-                                MessagePart::Text { text } => text_content.push_str(&text),
-                                MessagePart::Image { .. } => {}
-                            }
-                        }
-                    }
-                    None => {}
-                };
-
-                ChoiceDelta {
-                    index: choice.index,
-                    delta: ResponseMessageDelta {
-                        role: Some(match choice.message {
-                            RequestMessage::Assistant { .. } => Role::Assistant,
-                            RequestMessage::User { .. } => Role::User,
-                            RequestMessage::System { .. } => Role::System,
-                            RequestMessage::Tool { .. } => Role::Tool,
-                        }),
-                        content: if text_content.is_empty() {
-                            None
-                        } else {
-                            Some(text_content)
-                        },
-                        tool_calls: None,
-                    },
-                    finish_reason: choice.finish_reason,
-                }
-            })
-            .collect(),
-        usage: Some(response.usage),
-    }
-}
 
 pub async fn stream_completion(
     client: &dyn HttpClient,
@@ -610,20 +718,15 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
-    if request.model.starts_with("o1") {
-        let response = complete(client, api_url, api_key, request).await;
-        let response_stream_event = response.map(adapt_response_to_stream);
-        return Ok(stream::once(future::ready(response_stream_event)).boxed());
-    }
-
-    let uri = format!("{api_url}/chat/completions");
+    let uri = format!("{api_url}/responses");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key));
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request_body: RequestV2 = request.into();
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request_body)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
