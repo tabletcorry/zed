@@ -220,12 +220,14 @@ impl OpenAiSettingsContent {
                                     max_tokens,
                                     max_output_tokens,
                                     max_completion_tokens,
+                                    service_tier,
                                 } => Some(provider::open_ai::AvailableModel {
                                     name,
                                     max_tokens,
                                     max_output_tokens,
                                     display_name,
                                     max_completion_tokens,
+                                    service_tier,
                                 }),
                                 _ => None,
                             })

@@ -54,6 +54,20 @@ impl From<Role> for String {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceTier {
+    Auto,
+    Flex,
+}
+
+impl Default for ServiceTier {
+    fn default() -> Self {
+        ServiceTier::Auto
+    }
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo")]
@@ -94,6 +108,8 @@ pub enum Model {
         max_tokens: usize,
         max_output_tokens: Option<u32>,
         max_completion_tokens: Option<u32>,
+        #[serde(default)]
+        service_tier: Option<ServiceTier>,
     },
 }
 
@@ -193,6 +209,13 @@ impl Model {
         }
     }
 
+    pub fn service_tier(&self) -> ServiceTier {
+        match self {
+            Self::Custom { service_tier, .. } => service_tier.unwrap_or_default(),
+            _ => ServiceTier::Auto,
+        }
+    }
+
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
@@ -222,6 +245,8 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
     pub temperature: f32,
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     /// Whether to enable parallel function calling during tool use.
